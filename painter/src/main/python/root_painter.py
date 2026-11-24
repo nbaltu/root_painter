@@ -70,6 +70,11 @@ from resize_images import ResizeWidget
 from keyboard_shortcuts_dialog import KeyboardShortcutsDialog
 from server_manager import find_trainer_launch, ServerManager, ServerLogDialog, check_trainer_status
 
+# Root-specific tools (RhizoVision Explorer export, extract count and
+# extract length) are hidden from the menus for map segmentation.
+# Set to True to show them again; the code itself is unchanged.
+SHOW_ROOT_TOOLS = False
+
 
 
 use_plugin("pil")
@@ -602,6 +607,7 @@ class RootPainter(QtWidgets.QMainWindow):
                                              self)
         conv_to_rve_btn.triggered.connect(self.show_conv_to_rve)
         extras_menu.addAction(conv_to_rve_btn)
+        conv_to_rve_btn.setVisible(SHOW_ROOT_TOOLS)
 
         conv_to_annot_btn = QtWidgets.QAction(QtGui.QIcon('missing.png'),
                                             'Convert segmentations to annotations',
@@ -1133,6 +1139,7 @@ class RootPainter(QtWidgets.QMainWindow):
             self.extract_count_widget.show()
         object_count_btn.triggered.connect(show_extract_count)
         measurements_menu.addAction(object_count_btn)
+        object_count_btn.setVisible(SHOW_ROOT_TOOLS)
 
         # length
         length_btn = QtWidgets.QAction(QtGui.QIcon('missing.png'),
@@ -1142,6 +1149,7 @@ class RootPainter(QtWidgets.QMainWindow):
             self.extract_length_widget.show()
         length_btn.triggered.connect(show_extract_length)
         measurements_menu.addAction(length_btn)
+        length_btn.setVisible(SHOW_ROOT_TOOLS)
 
         # region props
         region_props_btn = QtWidgets.QAction(QtGui.QIcon('missing.png'),
