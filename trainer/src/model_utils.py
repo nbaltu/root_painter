@@ -49,12 +49,14 @@ MODEL_SETTINGS_FNAME = 'model_settings.json'
 def get_model_settings(model_dir):
     """
     Read optional per-project settings from {model_dir}/model_settings.json,
-    for example {"normalization": "imagenet"}.
+    for example {"normalization": "imagenet", "augmentation": "ambio"}.
 
     Projects without this file keep the original behaviour, so models
     trained before this setting existed are used exactly as they were trained.
     """
-    settings = {'normalization': im_utils.DEFAULT_NORMALIZATION}
+    settings = {'normalization': im_utils.DEFAULT_NORMALIZATION,
+                # checked in datasets.TrainDataset
+                'augmentation': 'rootpainter'}
     settings_path = os.path.join(model_dir, MODEL_SETTINGS_FNAME)
     if os.path.isfile(settings_path):
         with open(settings_path, 'r') as settings_file:

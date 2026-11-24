@@ -94,25 +94,98 @@ class UNetTransformer():
         return photo, annot
 
 
+def _logit(x):
+    x = np.clip(x, 1e-7, 1 - 1e-7)
+    return -np.log(1 / x - 1)
+
+
+def _sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+
+class AmbioTransformer():
+    """
+    Data augmentation following Mayra et al. (Ambio 2023), who used
+    fastai 2.7.8 aug_transforms(max_rotate=5, max_warp=0, max_zoom=1)
+    plus Saturation(max_lighting=0.3) and random erasing.
+
+    Reproduced here (numpy port of fastai.vision.augment):
+      - horizontal flip, p=0.5
+      - brightness, max_lighting=0.2, p=0.75
+      - contrast, max_lighting=0.2, p=0.75
+      - saturation, max_lighting=0.3, p=0.75
+    Brightness, contrast and saturation are applied in logit space,
+    in that order, as fastai does.
+
+    Deliberately left out: rotation and random erasing.
+    No elastic distortion or noise (Ambio did not use them).
+    """
+    p_flip = 0.5
+    p_lighting = 0.75
+    max_brightness = 0.2
+    max_contrast = 0.2
+    max_saturation = 0.3
+    # ITU-R 601-2 luma weights, as fastai.vision.augment.grayscale
+    luma = np.array([0.2989, 0.5870, 0.1140], dtype=np.float32)
+
+    def transform(self, photo, annot):
+        """ photo: float RGB in [0, 1], shape (h, w, 3) """
+        if random.random() < self.p_flip:
+            photo = np.fliplr(photo)
+            annot = np.fliplr(annot)
+
+        x = _logit(photo.astype(np.float32))
+        if random.random() < self.p_lighting:
+            change = random.uniform(0.5 * (1 - self.max_brightness),
+                                    0.5 * (1 + self.max_brightness))
+            x = x + _logit(change)
+        if random.random() < self.p_lighting:
+            lim = math.log(1 - self.max_contrast)
+            x = x * math.exp(random.uniform(lim, -lim))
+        if random.random() < self.p_lighting:
+            lim = math.log(1 - self.max_saturation)
+            change = math.exp(random.uniform(lim, -lim))
+            gray = (x * self.luma).sum(axis=-1, keepdims=True)
+            x = x * change + gray * (1 - change)
+        photo = _sigmoid(x).astype(np.float32)
+        return photo, annot
+
+
+AUGMENTATION_MODES = ('rootpainter', 'ambio')
+DEFAULT_AUGMENTATION = 'rootpainter'
+
+
+def check_augmentation(mode):
+    if mode not in AUGMENTATION_MODES:
+        raise ValueError(f'Unknown augmentation {mode!r}, '
+                         f'expected one of {AUGMENTATION_MODES}')
+
+
 class TrainDataset(Dataset):
     def __init__(self, train_annot_dir, dataset_dir, in_w, out_w,
                  min_epoch_tiles=612, classes=None,
-                 normalization=im_utils.DEFAULT_NORMALIZATION):
+                 normalization=im_utils.DEFAULT_NORMALIZATION,
+                 augmentation=DEFAULT_AUGMENTATION):
         """
         in_w and out_w are the tile size in pixels
         min_epoch_tiles: minimum number of samples per epoch
         classes: project brushes [[name, rgba, key], ...], Background first.
                  None for a legacy binary (red/green) project.
         normalization: 'tile' or 'imagenet', see im_utils.normalize
+        augmentation: 'rootpainter' (original) or 'ambio', see AmbioTransformer
         """
         im_utils.check_normalization(normalization)
+        check_augmentation(augmentation)
         self.normalization = normalization
         self.classes = classes
         self.in_w = in_w
         self.out_w = out_w
         self.train_annot_dir = train_annot_dir
         self.dataset_dir = dataset_dir
-        self.augmentor = UNetTransformer(normalization)
+        if augmentation == 'ambio':
+            self.augmentor = AmbioTransformer()
+        else:
+            self.augmentor = UNetTransformer(normalization)
         self.min_epoch_tiles = min_epoch_tiles
 
     def __len__(self):

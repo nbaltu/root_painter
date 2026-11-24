@@ -271,13 +271,16 @@ class Trainer():
             self.msg_dir = self.train_config['message_dir']
             model_dir = self.train_config['model_dir']
             classes = config.get('classes')
-            self.normalization = model_utils.get_normalization(model_dir)
-            print('Input normalization:', self.normalization)
+            settings = model_utils.get_model_settings(model_dir)
+            self.normalization = settings['normalization']
+            print('Input normalization:', self.normalization,
+                  '| augmentation:', settings['augmentation'])
             self.train_set = TrainDataset(self.train_config['train_annot_dir'],
                                           self.train_config['dataset_dir'],
                                           self.in_w, self.out_w,
                                           classes=classes,
-                                          normalization=self.normalization)
+                                          normalization=self.normalization,
+                                          augmentation=settings['augmentation'])
             num_classes = get_num_classes(classes)
             model_paths = model_utils.get_latest_model_paths(model_dir, 1)
             if model_paths:
