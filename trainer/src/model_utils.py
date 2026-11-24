@@ -18,6 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pylint: disable=C0111, R0913, R0914, W0511
 import os
+import json
 import time
 import glob
 import numpy as np
@@ -41,8 +42,35 @@ def get_device():
 
 device = get_device() # used in epoch function etc.
 
+MODEL_EXTENSIONS = ('.pkl', '.pth')
+MODEL_SETTINGS_FNAME = 'model_settings.json'
+
+
+def get_model_settings(model_dir):
+    """
+    Read optional per-project settings from {model_dir}/model_settings.json,
+    for example {"normalization": "imagenet"}.
+
+    Projects without this file keep the original behaviour, so models
+    trained before this setting existed are used exactly as they were trained.
+    """
+    settings = {'normalization': im_utils.DEFAULT_NORMALIZATION}
+    settings_path = os.path.join(model_dir, MODEL_SETTINGS_FNAME)
+    if os.path.isfile(settings_path):
+        with open(settings_path, 'r') as settings_file:
+            settings.update(json.load(settings_file))
+    im_utils.check_normalization(settings['normalization'])
+    return settings
+
+
+def get_normalization(model_dir):
+    return get_model_settings(model_dir)['normalization']
+
+
 def get_latest_model_paths(model_dir, k):
     fnames = ls(model_dir)
+    # only model files, so settings files are never loaded as a model
+    fnames = [f for f in fnames if f.lower().endswith(MODEL_EXTENSIONS)]
     fnames = sorted(fnames)[-k:]
     fpaths = [os.path.join(model_dir, f) for f in fnames]
     return fpaths
@@ -103,7 +131,8 @@ def batch_class_maps(outputs, targets, threshold=0.5):
 
 
 def get_val_metrics(cnn, val_annot_dir, dataset_dir, in_w, out_w, bs,
-                    classes=None):
+                    classes=None,
+                    normalization=im_utils.DEFAULT_NORMALIZATION):
     """
     Return the TP, FP, TN, FN (summed over classes), per class metrics
     and mean class F1 for the {cnn} on the validation set
@@ -151,7 +180,8 @@ def get_val_metrics(cnn, val_annot_dir, dataset_dir, in_w, out_w, bs,
         image = im_utils.load_image(image_path)
         image, pad_settings = im_utils.pad_to_min(image, min_w=572, min_h=572)
         predicted = unet_segment(cnn, image, bs, in_w,
-                                 out_w, threshold=0.5)
+                                 out_w, threshold=0.5,
+                                 normalization=normalization)
         predicted = im_utils.crop_from_pad_settings(predicted, pad_settings)
 
         counts += class_confusion(predicted, true_map, mask, num_classes)
@@ -177,7 +207,8 @@ def save_if_better(model_dir, cur_model, prev_model_path,
     return False
 
 def ensemble_segment(model_paths, image, bs, in_w, out_w,
-                     threshold=0.5):
+                     threshold=0.5,
+                     normalization=im_utils.DEFAULT_NORMALIZATION):
     """ Average predictions from each model specified in model_paths.
         Returns a class index map (0 = background). """
     pred_sum = None
@@ -187,7 +218,8 @@ def ensemble_segment(model_paths, image, bs, in_w, out_w,
     for model_path in model_paths:
         cnn = load_model(model_path)
         preds = unet_segment(cnn, image,
-                             bs, in_w, out_w, threshold=None)
+                             bs, in_w, out_w, threshold=None,
+                             normalization=normalization)
         if pred_sum is not None:
             pred_sum += preds
         else:
@@ -196,7 +228,8 @@ def ensemble_segment(model_paths, image, bs, in_w, out_w,
         # get flipped version too (test time augmentation)
         flipped_im = np.fliplr(image)
         flipped_pred = unet_segment(cnn, flipped_im, bs, in_w,
-                                    out_w, threshold=None)
+                                    out_w, threshold=None,
+                                    normalization=normalization)
         pred_sum += np.fliplr(flipped_pred)
         pred_count += 1
     pred_sum = im_utils.crop_from_pad_settings(pred_sum, pad_settings)
@@ -250,7 +283,8 @@ def epoch(model, train_loader, batch_size,
     avg_loss = loss_sum / (step + 1)
     return (counts, defined_total, avg_loss)
 
-def unet_segment(cnn, image, bs, in_w, out_w, threshold=0.5):
+def unet_segment(cnn, image, bs, in_w, out_w, threshold=0.5,
+                 normalization=im_utils.DEFAULT_NORMALIZATION):
     """
     Returns a class index map (0 = background), or with threshold set
     to None the (H, W, C) per class probabilities.
@@ -271,7 +305,7 @@ def unet_segment(cnn, image, bs, in_w, out_w, threshold=0.5):
             if tile_idx < len(tiles):
                 tile = tiles[tile_idx]
                 tile = img_as_float32(tile)
-                tile = im_utils.normalize_tile(tile)
+                tile = im_utils.normalize(tile, normalization)
                 tile = np.moveaxis(tile, -1, 0)
                 tile_idx += 1
                 tiles_to_process.append(tile)

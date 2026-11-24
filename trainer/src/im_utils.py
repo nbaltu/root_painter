@@ -48,6 +48,49 @@ def normalize_tile(tile):
     return tile
 
 
+# How image tiles are scaled before going into the network.
+#  'tile'     : stretch each tile so its own min becomes 0 and max becomes 1
+#               (original RootPainter behaviour). Neighbouring tiles of the
+#               same image can be scaled differently, which can show up as
+#               square-shaped differences in the segmentation.
+#  'imagenet' : the same fixed scaling for every tile of every image:
+#               pixel / 255, then per channel (value - IMAGENET_MEAN) /
+#               IMAGENET_STD. This is the input scaling expected by the
+#               ImageNet-pretrained encoder in seg_model.py and fastai's
+#               default for pretrained encoders (used by Mayra et al.,
+#               Ambio 2023).
+NORMALIZATION_MODES = ('tile', 'imagenet')
+DEFAULT_NORMALIZATION = 'tile'
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
+def check_normalization(mode):
+    if mode not in NORMALIZATION_MODES:
+        raise ValueError(f'Unknown normalization {mode!r}, '
+                         f'expected one of {NORMALIZATION_MODES}')
+
+
+def to_unit_range(tile, mode=DEFAULT_NORMALIZATION):
+    """
+    Bring a float tile into [0, 1] for data augmentation.
+    'tile' stretches the tile, 'imagenet' only clips
+    (img_as_float32 has already divided 8-bit images by 255).
+    """
+    check_normalization(mode)
+    if mode == 'tile':
+        return normalize_tile(tile)
+    return np.clip(tile, 0, 1).astype(np.float32)
+
+
+def normalize(tile, mode=DEFAULT_NORMALIZATION):
+    """ Final scaling of a float RGB tile before it goes into the network. """
+    tile = to_unit_range(tile, mode)
+    if mode == 'imagenet':
+        tile = (tile - IMAGENET_MEAN) / IMAGENET_STD
+    return tile.astype(np.float32)
+
+
 def annot_to_onehot(annot, classes=None):
     """ Decode an annotation PNG saved by the painter.
 

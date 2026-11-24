@@ -45,6 +45,7 @@ from model_utils import create_first_model_with_random_weights
 import model_utils
 from model_utils import save_if_better
 
+import im_utils
 from im_utils import is_photo, load_image, save_then_move, class_map_to_rgba
 from file_utils import ls
 from startup import startup_setup, ensure_required_folders_exist
@@ -96,6 +97,7 @@ class Trainer():
         self.train_set = None
         # Can be set by instructions.
         self.train_config = None
+        self.normalization = None
         self.model = None
         self.first_loop = True
         self.in_w = patch_size
@@ -269,10 +271,13 @@ class Trainer():
             self.msg_dir = self.train_config['message_dir']
             model_dir = self.train_config['model_dir']
             classes = config.get('classes')
+            self.normalization = model_utils.get_normalization(model_dir)
+            print('Input normalization:', self.normalization)
             self.train_set = TrainDataset(self.train_config['train_annot_dir'],
                                           self.train_config['dataset_dir'],
                                           self.in_w, self.out_w,
-                                          classes=classes)
+                                          classes=classes,
+                                          normalization=self.normalization)
             num_classes = get_num_classes(classes)
             model_paths = model_utils.get_latest_model_paths(model_dir, 1)
             if model_paths:
@@ -415,7 +420,8 @@ class Trainer():
                                   val_annot_dir=self.train_config['val_annot_dir'],
                                   dataset_dir=self.train_config['dataset_dir'],
                                   in_w=self.in_w, out_w=self.out_w, bs=self.bs,
-                                  classes=self.train_config.get('classes'))
+                                  classes=self.train_config.get('classes'),
+                                  normalization=self.normalization)
         prev_model, prev_path = model_utils.get_prev_model(model_dir)
         cur_metrics = get_val_metrics(copy.deepcopy(self.model))
         prev_metrics = get_val_metrics(prev_model)
@@ -496,15 +502,20 @@ class Trainer():
                 create_first_model_with_random_weights(model_dir,
                                                        get_num_classes(classes))
                 model_paths = model_utils.get_latest_model_paths(model_dir, 1)
+        # Use the normalization the model was trained with.
+        normalization = model_utils.get_normalization(
+            os.path.dirname(model_paths[0]))
         start = time.time()
         for fname in fnames:
             self.segment_file(in_dir, seg_dir, fname,
-                              model_paths, format_str, classes)
+                              model_paths, format_str, classes,
+                              normalization)
         duration = time.time() - start
         print(f'Seconds to segment {len(fnames)} images: ', round(duration, 3))
         
     def segment_file(self, in_dir, seg_dir, fname, model_paths, format_str,
-                     classes=None):
+                     classes=None,
+                     normalization=im_utils.DEFAULT_NORMALIZATION):
         """ seg_out is a class index map (0 = background). The default PNG
             output shows each class in its brush colour. """
         fpath = os.path.join(in_dir, fname)
@@ -564,7 +575,8 @@ class Trainer():
                 seg_out = mobilesam_segment_image(model_paths[0], photo)
             else:
                 seg_out = ensemble_segment(model_paths, photo, self.bs,
-                                             self.in_w, self.out_w)
+                                             self.in_w, self.out_w,
+                                             normalization=normalization)
             print(f'segment {fname}, dur', round(time.time() - seg_start, 2))
             # catch warnings as low contrast is ok here.
             with warnings.catch_warnings():

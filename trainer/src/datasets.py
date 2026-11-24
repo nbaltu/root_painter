@@ -55,7 +55,8 @@ def salt_pepper_transform(photo, annot):
 
 class UNetTransformer():
     """ Data Augmentation """
-    def __init__(self):
+    def __init__(self, normalization=im_utils.DEFAULT_NORMALIZATION):
+        self.normalization = normalization
         self.color_jit = ColorJitter(brightness=0.3, contrast=0.3,
                                      saturation=0.2, hue=0.001)
 
@@ -69,6 +70,9 @@ class UNetTransformer():
         for transform in transforms:
             if random.random() < 0.8:
                 photo, annot = transform(photo, annot)
+                if self.normalization != 'tile':
+                    # keep values in [0, 1] without stretching the tile
+                    photo = np.clip(photo, 0, 1)
 
         if random.random() < 0.5:
             photo = np.fliplr(photo)
@@ -79,7 +83,11 @@ class UNetTransformer():
     def color_jit_transform(self, photo, annot):
         # TODO check skimage docs for something cleaner to convert
         # from float to int
-        photo = rescale_intensity(photo, out_range=(0, 255))
+        if self.normalization != 'tile':
+            # scale [0, 1] -> [0, 255] without stretching the tile's contrast
+            photo = np.clip(photo, 0, 1) * 255
+        else:
+            photo = rescale_intensity(photo, out_range=(0, 255))
         photo = Image.fromarray((photo).astype(np.uint8), mode='RGB')
         photo = self.color_jit(photo)  # returns PIL image
         photo = img_as_float32(np.array(photo))  # return back to numpy
@@ -88,19 +96,23 @@ class UNetTransformer():
 
 class TrainDataset(Dataset):
     def __init__(self, train_annot_dir, dataset_dir, in_w, out_w,
-                 min_epoch_tiles=612, classes=None):
+                 min_epoch_tiles=612, classes=None,
+                 normalization=im_utils.DEFAULT_NORMALIZATION):
         """
         in_w and out_w are the tile size in pixels
         min_epoch_tiles: minimum number of samples per epoch
         classes: project brushes [[name, rgba, key], ...], Background first.
                  None for a legacy binary (red/green) project.
+        normalization: 'tile' or 'imagenet', see im_utils.normalize
         """
+        im_utils.check_normalization(normalization)
+        self.normalization = normalization
         self.classes = classes
         self.in_w = in_w
         self.out_w = out_w
         self.train_annot_dir = train_annot_dir
         self.dataset_dir = dataset_dir
-        self.augmentor = UNetTransformer()
+        self.augmentor = UNetTransformer(normalization)
         self.min_epoch_tiles = min_epoch_tiles
 
     def __len__(self):
@@ -146,9 +158,9 @@ class TrainDataset(Dataset):
             f" shape is {im_tile.shape} for tile from {fname}")
 
         im_tile = img_as_float32(im_tile)
-        im_tile = im_utils.normalize_tile(im_tile)
+        im_tile = im_utils.to_unit_range(im_tile, self.normalization)
         im_tile, annot_tile = self.augmentor.transform(im_tile, annot_tile)
-        im_tile = im_utils.normalize_tile(im_tile)
+        im_tile = im_utils.normalize(im_tile, self.normalization)
 
         annot_tile = np.array(annot_tile)
         # Annotion is cropped post augmentation to ensure
